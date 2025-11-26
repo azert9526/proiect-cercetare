@@ -1,15 +1,14 @@
-import random
-import string
-import time
-from hll import cardinality_estimation
+import numpy as np
 
-def generate_random_strings(n=10000, length=30):
-    alphabet = string.ascii_letters + string.digits
-    return [
-        ''.join(random.choices(alphabet, k=length))
-        for _ in range(n)
-    ]
+from generate_training_data import HLLDataset, generate_training_sample
+from training import train_model, evaluate_and_plot
+import torch
+
+print("CUDA available:", torch.cuda.is_available())
+print("CUDA version:", torch.version.cuda)
+print("Current device:", torch.cuda.current_device() if torch.cuda.is_available() else "None")
+print("Device name:", torch.cuda.get_device_name(0) if torch.cuda.is_available() else "None")
 
 
-random.seed(time.time())
-print(cardinality_estimation(generate_random_strings(n=80000), p=12))
+model = train_model()
+evaluate_and_plot(model)

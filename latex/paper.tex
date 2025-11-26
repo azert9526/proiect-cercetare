@@ -1,0 +1,89 @@
+\documentclass{article}
+\usepackage{graphicx}
+\usepackage{hyperref, url}
+\usepackage{cite}
+\usepackage{algorithm}
+\usepackage{algpseudocode}
+\usepackage[letterpaper]{geometry} 
+
+\title{A Learning Augmented approach to Cardinality Estimation}
+\author{Mărcuș Alexandru Marian}
+
+\begin{document}
+\maketitle
+\section{Schita cuprins}
+Abstract\\
+Introduction\\
+Related Work\\
+Theoretical Foundation\\
+Methodology\\
+Implementation\\
+Experiments\\
+Conclusions\\
+
+
+\section{Theoretical Foundation}
+
+
+
+
+consistency, robustness, competitiveness
+
+loss function: log loss/ cross entropy
+$ L = (\log(E)-\log(N))^2 $
+
+\section{Plan pentru partea aplicativa a lucrarii}
+Implementarea standard a algoritmelor HLL si HLL++.\\
+Generare de date cu diverse distributii ce ar putea fi regasite in date reale (ex. uniform, clustered etc).\\
+Feature extraction din HLL sketch (ex. max, min, media, devia standard, \% din registre sunt goale, histograma a valorilor din registrii).\\
+Antrenarea unui model mic (ex. regresie, un neural network cu putine layere etc).\\
+Evaluarea modelului fata de standarde ca si acuratete, runtime si memorie.\\
+Analiza rezultatelor si concluzii.\\
+
+
+\section{Methodology}
+\subsection{Overview}
+We implement the standard HLL algorithm and augment it with a learned post-processing 
+module. The neural component receives various features from the final register
+array $M$ and uses them for deciding the weight of each register in the final result 
+computation.
+
+\subsection{Data}
+
+\subsection{}
+
+\begin{algorithm}[H]
+\caption{Learned HyperLogLog}
+\begin{algorithmic}[1]
+\Require Let $h : \mathcal{D} \to \{0,1\}^{64}$ hash data from domain $\mathcal{D}$.  
+Let $m = 2^p$ with $p \in [4..16]$.
+
+\Statex
+\textbf{Phase 0: Initialization.}
+\State Define $\alpha_{16} = 0.673,\ \alpha_{32} = 0.697,\ \alpha_{64} = 0.709,$
+\State \hspace{1.5em} $\alpha_m = 0.7213/(1 + 1.079/m)$ for $m \ge 128$.
+\State Initialize $m$ registers $M[0]$ to $M[m-1]$ to 0.
+
+\Statex
+\textbf{Phase 1: Aggregation.}
+\ForAll{$v \in S$}
+    \State $x := h(v)$
+    \State $\mathit{id} := (x_{63},\ldots,x_{64-p})_2$ \Comment{First $p$ bits of $x$}
+    \State $w := (x_{63-p},\ldots,x_0)_2$
+    \State $M[\mathit{id}] := \max(M[\mathit{id}], \rho(w))$
+\EndFor
+
+\Statex
+\textbf{Phase 2: Result computation.}
+\State \Return $E := \alpha_m m^2 \left( \sum_{j=0}^{m-1} 2^{-M[j]} \right)^{-1}$ \Comment{The “raw” estimate}
+
+\end{algorithmic}
+\end{algorithm}
+
+
+
+\nocite{*}
+
+\bibliographystyle{unsrt}
+\bibliography{references}
+\end{document}
