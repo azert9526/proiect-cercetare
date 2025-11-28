@@ -1,19 +1,21 @@
 import torch
 import torch.nn as nn
-from torch.nn.functional import softplus
+import torch.nn.functional as F
 
 class LearnedHLL(nn.Module):
-    def __init__(self, input_dim=73):
+    def __init__(self, max_reg=64):
         super().__init__()
         self.net = nn.Sequential(
-            nn.Linear(input_dim, 128),
+            nn.Linear(max_reg, 128),
             nn.ReLU(),
-            nn.Linear(128, 64),
+            nn.Linear(128, 128),
             nn.ReLU(),
-            nn.Linear(64, 1)
+            nn.Linear(128, max_reg)
         )
 
-    def forward(self, x):
-        return torch.relu(self.net(x))
+    def forward(self, hist):
+        logits = self.net(hist)
+        w = F.softmax(logits, dim=1)
+        return w
 
 

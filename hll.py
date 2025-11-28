@@ -1,6 +1,7 @@
 import math
 from hashlib import sha256
 import numpy as np
+import torch
 
 
 class HyperLogLog:
@@ -44,7 +45,22 @@ class HyperLogLog:
     def estimate(self):
         Z = np.sum(1.0 / (2.0 ** self.M))
         E = self.alpha * self.m * self.m / Z
+
+        # small range correction
+        if E <= 2.5 * self.m:
+            V = np.sum(self.M == 0)
+            if V > 0:
+                E = self.m * np.log(self.m / V) # linear counting
+
+        # large range correction
+        if E > (1 / 30) * (1 << 32):
+            E = - (1 << 32) * np.log(1 - E / (1 << 32))
+
         return E
+
+    def set_registers(self, M, p):
+        self.M = M
+        self.p = p
 
     def __len__(self):
         return int(self.estimate())
@@ -55,49 +71,30 @@ class LearnedRegisterWeightedHLL(HyperLogLog):
         super().__init__(p)
         self.model = model
 
-    def get_features(self):
-        M = self.M
-
-        hist = np.bincount(M, minlength=M.max(initial=0) + 1) / self.m
-
-        features = [
-            M.mean(),
-            M.std(),
-            np.sum(M == 0) / self.m,
-            np.sum(M == 1) / self.m,
-            np.max(M),
-            np.median(M),
-        ]
-        features.extend(hist.tolist())
-
-        return np.array(features, dtype=float).reshape(1, -1)
-
-    def weighted_estimate(self):
+    def estimate(self):
         """
         Compute estimate using learned register weights.
         """
         max_register_value = int(self.M.max(initial=0))
-        bucket_sums = np.zeros(max_register_value + 1, float)
+        bucket_sums = np.zeros(64, float)
         for v in range(max_register_value + 1):
             bucket_sums[v] = np.sum(self.M == v)
 
-        features = self.get_features()
-        raw_w = self.model.predict(features)
-        raw_w = np.asarray(raw_w).reshape(-1)
+        hist = np.bincount(self.M, minlength=64).astype(np.float32)
 
-        w = np.clip(raw_w, a_min=0.0, a_max=None)
-        w = w / np.sum(w)
+        device = next(self.model.parameters()).device
+        x = torch.tensor(hist, dtype=torch.float32, device=device).unsqueeze(0)  # (1, max_reg)
 
-        if len(raw_w) != bucket_sums:
-            raise ValueError(
-                f"length of {len(raw_w)} weights =/= number of registers m = {self.m}"
-            )
-
-        Z = np.sum(w * (2.0 ** (-bucket_sums)))
-
-        E = self.alpha * self.m * self.m / Z
-
-        return E
+        with torch.no_grad():
+            w = self.model(x)  # (1, max_reg)
+            v = torch.arange(64, device=device, dtype=torch.float32)
+            pow_term = torch.pow(2.0, -v)
+            Z = torch.sum(w * x * pow_term, dim=1)  # (1,)
+            Z = torch.clamp(Z, min=1e-12)
+            m = self.m
+            alpha = self.alpha
+            E = alpha * m * m / Z
+            return float(E.item())
 
 
 def extract_features(M, max_reg=64):

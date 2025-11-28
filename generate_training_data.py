@@ -5,27 +5,28 @@ from torch.utils.data import Dataset, DataLoader
 
 
 def generate_training_sample(p=16, max_reg=64):
-    # Sample N ~ log-uniform
     N = int(10 ** np.random.uniform(1, 8))
-
     m = 1 << p
-    lam = N / m
 
-    # 1) Draw Poisson counts for each register
-    K = np.random.poisson(lam=lam, size=m)
+    # --- Generate random 64-bit hashes ---
+    h = np.random.randint(0, (1 << 63), size=N, dtype=np.uint64)
 
-    # 2) Registers with K=0 stay at 0
+    # --- Split hash into index + remainder bits ---
+    idx = h >> (64 - p)
+    w = (h << p) & np.uint64((1 << 64) - 1)
+
+    # --- Vectorized leading zero count ---
+    lz = clz64_numpy(w)
+    rho = lz + 1     # HLL uses 1 + leading zeros
+
+    # --- Build registers ---
     M = np.zeros(m, dtype=np.uint8)
+    np.maximum.at(M, idx, rho.astype(np.uint8))
 
-    # 3) For K>0, register = 1 + Geometric(p=0.5)
-    positive = K > 0
-    # numpy geometric gives number of trials until first success
-    M[positive] = 1 + np.random.geometric(p=0.5, size=positive.sum())
+    # Histogram
+    hist = np.bincount(M, minlength=max_reg).astype(np.float32)
 
-    # 4) Extract your features
-    features = extract_features(M, max_reg=max_reg)
-
-    return features, float(N)
+    return M, hist, float(N)
 
 
 # Precompute leading zeros for all byte values 0..255
@@ -80,41 +81,23 @@ def generate_test_sample(p=16, max_reg=64):
     M = np.zeros(m, dtype=np.uint8)
     np.maximum.at(M, idx, rho.astype(np.uint8))
 
-    # --- Compute the true HLL estimate ---
-    hll_est = estimate_hll(M, p)
-
-    # --- Extract your features ---
-    features = extract_features(M, max_reg=max_reg)
-
-    return features, hll_est, float(N)
-
-
-def estimate_hll(M, p):
-    m = 1 << p
-    alpha_m = 0.7213/(1+1.079/m)
-    Z = np.sum(2.0 ** (-M))
-    E = alpha_m * m*m / Z
-
-    # small range correction
-    if E <= 2.5*m:
-        V = np.sum(M == 0)
-        if V > 0:
-            E = m * np.log(m / V)
-
-    # large range correction
-    if E > (1/30) * (1 << 32):
-        E = - (1 << 32) * np.log(1 - E / (1 << 32))
-
-    return E
+    return M, float(N)
 
 
 class HLLDataset(Dataset):
-    def __init__(self, size):
+    def __init__(self, size, p=16, max_reg=64):
         self.size = size
+        self.p = p
+        self.max_reg = max_reg
 
     def __len__(self):
         return self.size
 
     def __getitem__(self, idx):
-        features, N = generate_training_sample()
-        return torch.tensor(features), torch.tensor([N], dtype=torch.float32)
+        M, hist, N = generate_training_sample(p=self.p, max_reg=self.max_reg)
+
+        hist = torch.tensor(hist, dtype=torch.float32)     # (max_reg,)
+        M = torch.tensor(M, dtype=torch.long)              # (m,)
+        N = torch.tensor(N, dtype=torch.float32)           # scalar
+
+        return hist, M, N
