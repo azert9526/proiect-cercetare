@@ -18,7 +18,7 @@ class LearnedHLL(nn.Module):
         hist = hist / hist.sum(dim=1, keepdim=True)
 
         raw_corr = self.net(hist)
-        corr = 1.0 + 0.5 * torch.tanh(raw_corr)
+        corr = 1.0 + torch.tanh(raw_corr)
         return corr
 
 

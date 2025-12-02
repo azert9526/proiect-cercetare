@@ -16,7 +16,7 @@ import matplotlib.pyplot as plt
 
 def train_model(
     batch_size=64,
-    epochs=3,
+    epochs=5,
     p=16,
     max_reg=64
 ):
@@ -36,16 +36,16 @@ def train_model(
     print(f"model built")
 
     m = 1 << p
-    alpha = 0.7213 / (1.0 + 1.079 / m)
 
     v = torch.arange(max_reg, device=device, dtype=torch.float32)
     pow_term = torch.pow(2.0, -v)
 
-    for epoch in range(epochs):
+    progress_epoch = tqdm(range(epochs), desc="Total time completed")
+    for epoch in progress_epoch:
         losses = []
 
         # tqdm progress bar
-        progress = tqdm(loader, desc=f"Epoch {epoch + 1}", ncols=130)
+        progress = tqdm(loader, desc=f"Epoch {epoch + 1}", leave=False)
 
         for batch_idx, (hist, trueN) in enumerate(progress):
 
@@ -69,7 +69,9 @@ def train_model(
                 "loss": f"{loss.item():.4f}",
             })
 
-        print(f"mean loss: {np.mean(losses)}")
+        progress_epoch.set_postfix({
+            f"mean loss": f"{np.mean(losses):.6f}"
+        })
 
     torch.save(model.state_dict(), "learned_hll_weights.pth")
     print("Model saved!")
@@ -93,9 +95,7 @@ def evaluate_and_plot(model, p=16, num_eval=200):
     baseline_err = []
     learned_err = []
 
-    for i in range(num_eval):
-        if i % 10 == 0:
-            print(f"Evaluate {i}/{num_eval}")
+    for _ in tqdm(range(num_eval)):
         M, N = generate_test_sample()
         # baseline estimate from fresh HLL
 

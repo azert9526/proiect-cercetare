@@ -69,12 +69,13 @@ class HyperLogLog:
 class LearnedRegisterWeightedHLL(HyperLogLog):
     def __init__(self, model, p):
         super().__init__(p)
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.model = model
 
     def estimate(self):
         Z = np.sum(1.0 / (2.0 ** self.M))
         hist = np.bincount(self.M, minlength=64).astype(np.float32)
-        hist = torch.tensor(hist, dtype=torch.float32).unsqueeze(0)
+        hist = torch.tensor(hist, dtype=torch.float32).unsqueeze(0).to(self.device)
 
         with torch.no_grad():
             raw_corr = self.model(hist).squeeze(1)     # shape (1,)

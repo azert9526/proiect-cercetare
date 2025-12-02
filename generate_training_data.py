@@ -1,101 +1,56 @@
 import numpy as np
+import cupy as cp
 from hll import HyperLogLog, extract_features
 import torch
 from torch.utils.data import Dataset, DataLoader
 from tqdm import tqdm
 
 
-def generate_training_sample(p=16, max_reg=64):
+def count_leading_zeros(x, q):
+    result = cp.zeros_like(x, dtype=cp.uint64)
+    not_zero_mask = x != 0
+    result[not_zero_mask] = q - (cp.floor(cp.log2(x[not_zero_mask])).astype(cp.uint64) + 1)
+    result[~not_zero_mask] = q
+
+    return result
+
+def generate_training_sample(p=16, q=48):
     N = int(10 ** np.random.uniform(1, 8))
     m = 1 << p
 
-    # Poisson number of items per register
-    lam = N / m
-    X = np.random.poisson(lam, size=m)
+    h = cp.random.randint(0, (1 << 63), size=N, dtype=cp.uint64)
 
-    # Vectorized sampling of max geometric per register
-    U = np.random.rand(m)
-    # Avoid div-by-zero for registers with X=0
-    X_safe = np.maximum(X, 1)
+    idx = h >> (64 - p)
+    w = (h << p) & cp.uint64((1 << 64) - 1)
 
-    M = np.log(1 - U**(1.0 / X_safe)) / np.log(0.5)
-    M[X == 0] = 0     # fixed value
-    M = np.clip(M, 0, max_reg - 1).astype(np.int32)
+    lz = count_leading_zeros(w, q)
+    rho = (lz + 1).astype(dtype=cp.uint64)
 
-    # Histogram
-    hist = np.bincount(M, minlength=max_reg).astype(np.float32)
+    M = cp.zeros(m, dtype=cp.uint64)
+    cp.maximum.at(M, idx, rho)
 
-    return M, hist, float(N)
+    return cp.asnumpy(M).astype(dtype=np.uint8), float(N)
 
 
-def generate_dataset(num_samples=100000, p=16, max_reg=64):
-    hists = np.zeros((num_samples, max_reg), dtype=np.float32)
-    cardinalities = np.zeros(num_samples, dtype=np.float32)
+def generate_dataset(num_samples=200000, p=16, q=48):
+    m = 1 << p
+    registers = np.zeros((num_samples, m), dtype=np.uint8)
+    cardinalities = np.zeros(num_samples, dtype=np.uint64)
 
     print("Generating dataset...")
     for i in tqdm(range(num_samples)):
-        _, hist, N = generate_training_sample(p=p, max_reg=max_reg)
-        hists[i] = hist
+        M, N = generate_training_sample(p, q)
+        registers[i] = M
         cardinalities[i] = N
 
     print("Saving dataset to training_data.npz...")
-    np.savez_compressed("training_data.npz", hists=hists, cardinalities=cardinalities)
+    np.savez_compressed("training_data.npz", registers=registers, cardinalities=cardinalities)
     print("Done! File: training_data.npz")
 
 
-# Precompute leading zeros for all byte values 0..255
-LZ_TABLE = np.array([8] + [bin(i).find('1') for i in range(1, 256)], dtype=np.uint8)
 
-def clz64_numpy(x):
-    """
-    Count leading zeros for an array of uint64 using vectorized operations.
-    Returns array of same shape.
-    """
-
-    # Convert to bytes: shape (..., 8)
-    b = x.view(np.uint8).reshape(-1, 8)
-
-    # Find index of first non-zero byte
-    nz = b != 0
-    has_val = nz.any(axis=1)
-
-    # For entries with no nonzero bytes (x = 0)
-    # Return 64 leading zeros
-    result = np.zeros(len(x), dtype=np.uint8)
-    result[~has_val] = 64
-
-    # For nonzero bytes
-    # Get index of first non-zero byte
-    first_byte = np.argmax(nz, axis=1)
-
-    # Count leading zeros inside that byte
-    first_byte_values = b[np.arange(len(x)), first_byte]
-    lz_inside = LZ_TABLE[first_byte_values]
-
-    # Total leading zeros = byte_index*8 + lz_inside
-    result[has_val] = first_byte[has_val] * 8 + lz_inside[has_val]
-    return result
-
-def generate_test_sample(p=16, max_reg=64):
-    N = int(10 ** np.random.uniform(1, 8))
-    m = 1 << p
-
-    # --- Generate random 64-bit hashes ---
-    h = np.random.randint(0, (1 << 63), size=N, dtype=np.uint64)
-
-    # --- Split hash into index + remainder bits ---
-    idx = h >> (64 - p)
-    w = (h << p) & np.uint64((1 << 64) - 1)
-
-    # --- Vectorized leading zero count ---
-    lz = clz64_numpy(w)
-    rho = lz + 1     # HLL uses 1 + leading zeros
-
-    # --- Build registers ---
-    M = np.zeros(m, dtype=np.uint8)
-    np.maximum.at(M, idx, rho.astype(np.uint8))
-
-    return M, float(N)
+def generate_test_sample(p=16, q=48):
+    return generate_training_sample(p, q)
 
 
 class HLLDataset(Dataset):
