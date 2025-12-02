@@ -72,29 +72,16 @@ class LearnedRegisterWeightedHLL(HyperLogLog):
         self.model = model
 
     def estimate(self):
-        """
-        Compute estimate using learned register weights.
-        """
-        max_register_value = int(self.M.max(initial=0))
-        bucket_sums = np.zeros(64, float)
-        for v in range(max_register_value + 1):
-            bucket_sums[v] = np.sum(self.M == v)
-
+        Z = np.sum(1.0 / (2.0 ** self.M))
         hist = np.bincount(self.M, minlength=64).astype(np.float32)
-
-        device = next(self.model.parameters()).device
-        x = torch.tensor(hist, dtype=torch.float32, device=device).unsqueeze(0)  # (1, max_reg)
+        hist = torch.tensor(hist, dtype=torch.float32).unsqueeze(0)
 
         with torch.no_grad():
-            w = self.model(x)  # (1, max_reg)
-            v = torch.arange(64, device=device, dtype=torch.float32)
-            pow_term = torch.pow(2.0, -v)
-            Z = torch.sum(w * x * pow_term, dim=1)  # (1,)
-            Z = torch.clamp(Z, min=1e-12)
-            m = self.m
-            alpha = self.alpha
-            E = alpha * m * m / Z
-            return float(E.item())
+            raw_corr = self.model(hist).squeeze(1)     # shape (1,)
+            corr = raw_corr[0].item()
+
+        E = corr * self.m * self.m / Z
+        return E
 
 
 def extract_features(M, max_reg=64):

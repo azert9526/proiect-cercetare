@@ -8,14 +8,17 @@ class LearnedHLL(nn.Module):
         self.net = nn.Sequential(
             nn.Linear(max_reg, 128),
             nn.ReLU(),
-            nn.Linear(128, 128),
+            nn.Linear(128, 64),
             nn.ReLU(),
-            nn.Linear(128, max_reg)
+            nn.Linear(64, 1)
         )
 
     def forward(self, hist):
-        logits = self.net(hist)
-        w = F.softmax(logits, dim=1)
-        return w
+        hist = torch.log1p(hist)
+        hist = hist / hist.sum(dim=1, keepdim=True)
+
+        raw_corr = self.net(hist)
+        corr = 1.0 + 0.5 * torch.tanh(raw_corr)
+        return corr
 
 

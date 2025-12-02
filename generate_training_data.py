@@ -2,31 +2,45 @@ import numpy as np
 from hll import HyperLogLog, extract_features
 import torch
 from torch.utils.data import Dataset, DataLoader
+from tqdm import tqdm
 
 
 def generate_training_sample(p=16, max_reg=64):
     N = int(10 ** np.random.uniform(1, 8))
     m = 1 << p
 
-    # --- Generate random 64-bit hashes ---
-    h = np.random.randint(0, (1 << 63), size=N, dtype=np.uint64)
+    # Poisson number of items per register
+    lam = N / m
+    X = np.random.poisson(lam, size=m)
 
-    # --- Split hash into index + remainder bits ---
-    idx = h >> (64 - p)
-    w = (h << p) & np.uint64((1 << 64) - 1)
+    # Vectorized sampling of max geometric per register
+    U = np.random.rand(m)
+    # Avoid div-by-zero for registers with X=0
+    X_safe = np.maximum(X, 1)
 
-    # --- Vectorized leading zero count ---
-    lz = clz64_numpy(w)
-    rho = lz + 1     # HLL uses 1 + leading zeros
-
-    # --- Build registers ---
-    M = np.zeros(m, dtype=np.uint8)
-    np.maximum.at(M, idx, rho.astype(np.uint8))
+    M = np.log(1 - U**(1.0 / X_safe)) / np.log(0.5)
+    M[X == 0] = 0     # fixed value
+    M = np.clip(M, 0, max_reg - 1).astype(np.int32)
 
     # Histogram
     hist = np.bincount(M, minlength=max_reg).astype(np.float32)
 
     return M, hist, float(N)
+
+
+def generate_dataset(num_samples=100000, p=16, max_reg=64):
+    hists = np.zeros((num_samples, max_reg), dtype=np.float32)
+    cardinalities = np.zeros(num_samples, dtype=np.float32)
+
+    print("Generating dataset...")
+    for i in tqdm(range(num_samples)):
+        _, hist, N = generate_training_sample(p=p, max_reg=max_reg)
+        hists[i] = hist
+        cardinalities[i] = N
+
+    print("Saving dataset to training_data.npz...")
+    np.savez_compressed("training_data.npz", hists=hists, cardinalities=cardinalities)
+    print("Done! File: training_data.npz")
 
 
 # Precompute leading zeros for all byte values 0..255
@@ -101,3 +115,18 @@ class HLLDataset(Dataset):
         N = torch.tensor(N, dtype=torch.float32)           # scalar
 
         return hist, M, N
+
+
+class HLLPrecomputedDataset(Dataset):
+    def __init__(self, path="training_data.npz"):
+        data = np.load(path)
+        self.hists = data["hists"]
+        self.trueN = data["cardinalities"]
+
+    def __len__(self):
+        return len(self.hists)
+
+    def __getitem__(self, idx):
+        hist = torch.from_numpy(self.hists[idx])
+        N = torch.tensor(self.trueN[idx], dtype=torch.float32)
+        return hist, N
