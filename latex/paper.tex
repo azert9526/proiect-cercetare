@@ -12,43 +12,15 @@
 
 \begin{document}
 \maketitle
-\section{Schita cuprins}
-Abstract\\
-Introduction\\
-Related Work\\
-Theoretical Foundation\\
-Methodology\\
-Implementation\\
-Experiments\\
-Conclusions\\
-
-
-\section{Theoretical Foundation}
-
-
-
-
-consistency, robustness, competitiveness
-
-loss function: log loss/ cross entropy
-$ L = (\log(E)-\log(N))^2 $
-
-\section{Plan pentru partea aplicativa a lucrarii}
-Implementarea standard a algoritmelor HLL si HLL++.\\
-Generare de date cu diverse distributii ce ar putea fi regasite in date reale (ex. uniform, clustered etc).\\
-Feature extraction din HLL sketch (ex. max, min, media, devia standard, \% din registre sunt goale, histograma a valorilor din registrii).\\
-Antrenarea unui model mic (ex. regresie, un neural network cu putine layere etc).\\
-Evaluarea modelului fata de standarde ca si acuratete, runtime si memorie.\\
-Analiza rezultatelor si concluzii.\\
-
 
 \section{Methodology}
 
 \subsection{Experimental Setup}
-To measure the performance of this method, we generated 200000 different HyperLogLog sketches, each sketch having
+To measure the performance of this method, we generated a synthetic dataset
+containing 200000 different HyperLogLog sketches, each sketch having
 a cardinality in the range of $[10, 10^8]$, with a log-uniform distribution. Assuming a uniform hash function, we can 
 generate uniformly distributed 64 bit integers, simulating the hash values of random elements. 
-For real-world datasets we are using
+For real-world datasets we are using Openadresses and NCVoter. \cite{harmouch2017cesurvey}
 
 \subsection{Model matematic}
 \begin{algorithm}[H]
@@ -77,22 +49,65 @@ Let $m = 2^p$ with $p \in [4..16]$.
 \end{algorithm}
 
 Instead of using the classic formula $E := \alpha_m m^2 \left( \sum_{j=0}^{m-1} 2^{-M[j]} \right)^{-1}$ \cite{flajolet2007hyperloglog}
-for extracting the result from our sketch, we propose training a neural network to predict the cardinality. This should have several
-advantages, such as reduced bias and better results for real world distributions. As a bonus, we also eliminate the need 
-for magic numbers and special cases of the original algorithm. This approach should not have much overhead, in terms of memory or speed.
+for extracting the result from our sketch, we propose training a neural network to predict the cardinality. 
+This approach should not have much overhead, in terms of memory or speed.
 
-For the features of the model we are using
-As the loss function, we chose the Mean Squared Logarithmic Error $L = \frac{1}{n} \sum_{i=0}^n \left( \log(1+\hat{N}) - \log(1+N) \right)$
+The model takes the raw register array $M \in \left\{ 0, 1, ..., q \right\}^m$
+as input and outputs the prediction $\log(N)$.
+
+Each HLL sketch consists of $m=2^p$ registers, 
+$M = \left[ M_1, M_2, ..., M_m \right]$, $M_i\in \left\{ 0, 1, ..., q \right\}$
+
+Before feeding the array $M$ to the network, we normalize the values $x_i=M_i/q$.
+We apply three 1D convolutional layers, to downsample from the $2^p$ channels
+down to a compact 64x1024 activation map.
+Then it is fed into a multilayer perceptron, with three linear layers, from 
+64*1024 -> 512 -> 128 -> final prediction, $\log(n)$. 
+
+As the loss function, we chose the mean squared logarithmic error 
+$$L = \frac{1}{n} \sum_{i=0}^n \left( \log(1+\hat{N}) - \log(1+N) \right)$$
 \subsection{Results Validation}
 For validating our results we are plotting the 
-Relative Error $error := \frac{\vert \hat{N} - N \vert}{N}$.
+relative error $error := \frac{\vert \hat{N} - N \vert}{N}$.
 In the literature, the "raw" HLL estimate shows different performances
 for different ranges of cardinality, that are often empirically determined
-and corrected. We compare our results to the classic HLL \cite{flajolet2007hyperloglog},
+and corrected. It's important we observe the performance of our approach for
+all the possible different cardinalities, thus we prefer plotting our results
+instead of another measure like the mean relative error.
+
+\section{Studiu de caz}
+
+On our synthetic dataset we obtain better results than the original HLL paper,
+as shown in our comparison graph\ref{fig:comparison}.
+We still have to measure the overhead produces by this approach, even 
+if the theoretical space and time complexity remains the same.
+
+\begin{figure}
+\centering
+\includegraphics[totalheight=8cm]{result.png}
+\caption{Our Approach (orange) vs Original HLL (blue)}
+\label{fig:comparison}
+\end{figure}
+
+\section{Related work}
+We compare our results to the classic HLL \cite{flajolet2007hyperloglog},
 HyperLogLog++ \cite{heule2013hyperloglog} and other learned methods 
 \cite{aiyou2011selflearningbitmap} \cite{wu2021learnedestimator}.
-The ideal result would be an error close to the theoretical limit $1.04/sqrt(m)$
+The ideal result would be an error close to the theoretical limit $1.04/sqrt(m)$.
 
+Our approach builds the HyperLogLog sketch like usual, as proposed by
+\cite{flajolet2007hyperloglog}, but extracts the cardinality information
+using a machine learning approach. This is in contrast to other machine learning
+approaches that try to sample from the dataset to estimate its cardinality.
+Building the sketch requires a scan of the dataset so it is better suited
+for streaming environments. A more comprehensive review is found 
+in \cite{harmouch2017cesurvey}.
+
+The advantages of this approach are reduced bias for real world distribution, because the hash function
+may not be able to produce fully uniform results, but the network could learn
+this and not be affected. It also eliminates the need 
+for magic numbers and special cases, used in the original algorithm and other
+improvements \cite{heule2013hyperloglog}.
 
 
 \nocite{*}
