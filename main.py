@@ -10,7 +10,7 @@ print("Torch device:", torch.device("cuda" if torch.cuda.is_available() else "cp
 #p - precision (number of registers)
 #q - value range of register (total_bits - p)
 
-generate_dataset()
-#model = train_model()
-#evaluate_and_plot(model)
+#generate_dataset()
+model = train_model()
+evaluate_and_plot(model)
 

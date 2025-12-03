@@ -9,19 +9,19 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm
 
 from generate_training_data import HLLDataset, generate_training_sample, generate_test_sample, HLLPrecomputedDataset
-from hll import HyperLogLog, extract_features, LearnedRegisterWeightedHLL
-from neuralnet import LearnedHLL
+from hll import HyperLogLog, LearnedRegisterWeightedHLL
+from neuralnet import LearnedHLL, extract_features
 import matplotlib.pyplot as plt
 
 
 def train_model(
     batch_size=64,
-    epochs=5,
+    epochs=3,
     p=16,
-    max_reg=64
+    q=48
 ):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model = LearnedHLL(max_reg=max_reg).to(device)
+    model = LearnedHLL().to(device)
 
     if os.path.exists("learned_hll_weights.pth"):
         model.load_state_dict(torch.load("learned_hll_weights.pth", map_location=device))
@@ -35,11 +35,6 @@ def train_model(
     optimiz = optim.Adam(model.parameters())
     print(f"model built")
 
-    m = 1 << p
-
-    v = torch.arange(max_reg, device=device, dtype=torch.float32)
-    pow_term = torch.pow(2.0, -v)
-
     progress_epoch = tqdm(range(epochs), desc="Total time completed")
     for epoch in progress_epoch:
         losses = []
@@ -47,19 +42,17 @@ def train_model(
         # tqdm progress bar
         progress = tqdm(loader, desc=f"Epoch {epoch + 1}", leave=False)
 
-        for batch_idx, (hist, trueN) in enumerate(progress):
-
-            hist = hist.to(device, non_blocking=True)
+        for M_batch, trueN in progress:
+            M_batch = M_batch.to(device)
             trueN = trueN.to(device, non_blocking=True)
 
             # forward + backward
             optimiz.zero_grad()
 
-            corr = model(hist).squeeze(1)
-            Z = torch.sum(hist * pow_term, dim=1)
-            pred = corr * m * m / Z
+            log_pred = model(M_batch)
+            log_true = torch.log(trueN)
 
-            loss = mse_loss(torch.log1p(pred), torch.log1p(trueN))
+            loss = mse_loss(log_pred, log_true)
             loss.backward()
             optimiz.step()
 
@@ -90,7 +83,7 @@ def eval_model(model, samples=5000):
     print("Mean Relative Error:", np.mean(errs))
     print("Median Relative Error:", np.median(errs))
 
-def evaluate_and_plot(model, p=16, num_eval=200):
+def evaluate_and_plot(model, p=16, num_eval=400):
     Ns = []
     baseline_err = []
     learned_err = []

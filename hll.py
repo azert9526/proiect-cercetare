@@ -3,6 +3,8 @@ from hashlib import sha256
 import numpy as np
 import torch
 
+from neuralnet import extract_features
+
 
 class HyperLogLog:
     def __init__(self, p):
@@ -73,33 +75,11 @@ class LearnedRegisterWeightedHLL(HyperLogLog):
         self.model = model
 
     def estimate(self):
-        Z = np.sum(1.0 / (2.0 ** self.M))
-        hist = np.bincount(self.M, minlength=64).astype(np.float32)
-        hist = torch.tensor(hist, dtype=torch.float32).unsqueeze(0).to(self.device)
+        registers = torch.tensor(self.M, dtype=torch.float32, device=self.device)
 
         with torch.no_grad():
-            raw_corr = self.model(hist).squeeze(1)     # shape (1,)
-            corr = raw_corr[0].item()
+            log_pred = self.model(registers.unsqueeze(0))
+            pred = torch.exp(log_pred).cpu().item()
 
-        E = corr * self.m * self.m / Z
-        return E
+        return pred
 
-
-def extract_features(M, max_reg=64):
-    m = len(M)
-    hist = np.bincount(M, minlength=max_reg)
-
-    features = [
-        M.mean(),
-        M.std(),
-        np.sum(M == 0) / m,
-        np.sum(M == 1) / m,
-        np.max(M),
-        np.median(M),
-        np.percentile(M, 90),
-        np.percentile(M, 95),
-        np.percentile(M, 99)
-    ]
-
-    features.extend(hist.tolist())
-    return np.array(features, dtype=np.float32)
