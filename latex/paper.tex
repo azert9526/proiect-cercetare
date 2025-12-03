@@ -4,6 +4,7 @@
 \usepackage{cite}
 \usepackage{algorithm}
 \usepackage{algpseudocode}
+\usepackage{amsmath}
 \usepackage[letterpaper]{geometry} 
 
 \title{A Learning Augmented approach to Cardinality Estimation}
@@ -42,16 +43,14 @@ Analiza rezultatelor si concluzii.\\
 
 
 \section{Methodology}
-\subsection{Overview}
-We implement the standard HLL algorithm and augment it with a learned post-processing 
-module. The neural component receives various features from the final register
-array $M$ and uses them for deciding the weight of each register in the final result 
-computation.
 
-\subsection{Data}
+\subsection{Experimental Setup}
+To measure the performance of this method, we generated 200000 different HyperLogLog sketches, each sketch having
+a cardinality in the range of $[10, 10^8]$, with a log-uniform distribution. Assuming a uniform hash function, we can 
+generate uniformly distributed 64 bit integers, simulating the hash values of random elements. 
+For real-world datasets we are using
 
-\subsection{}
-
+\subsection{Model matematic}
 \begin{algorithm}[H]
 \caption{Learned HyperLogLog}
 \begin{algorithmic}[1]
@@ -60,8 +59,6 @@ Let $m = 2^p$ with $p \in [4..16]$.
 
 \Statex
 \textbf{Phase 0: Initialization.}
-\State Define $\alpha_{16} = 0.673,\ \alpha_{32} = 0.697,\ \alpha_{64} = 0.709,$
-\State \hspace{1.5em} $\alpha_m = 0.7213/(1 + 1.079/m)$ for $m \ge 128$.
 \State Initialize $m$ registers $M[0]$ to $M[m-1]$ to 0.
 
 \Statex
@@ -75,10 +72,26 @@ Let $m = 2^p$ with $p \in [4..16]$.
 
 \Statex
 \textbf{Phase 2: Result computation.}
-\State \Return $E := \alpha_m m^2 \left( \sum_{j=0}^{m-1} 2^{-M[j]} \right)^{-1}$ \Comment{The “raw” estimate}
-
+\State \Return Model Prediction 
 \end{algorithmic}
 \end{algorithm}
+
+Instead of using the classic formula $E := \alpha_m m^2 \left( \sum_{j=0}^{m-1} 2^{-M[j]} \right)^{-1}$ \cite{flajolet2007hyperloglog}
+for extracting the result from our sketch, we propose training a neural network to predict the cardinality. This should have several
+advantages, such as reduced bias and better results for real world distributions. As a bonus, we also eliminate the need 
+for magic numbers and special cases of the original algorithm. This approach should not have much overhead, in terms of memory or speed.
+
+For the features of the model we are using
+As the loss function, we chose the Mean Squared Logarithmic Error $L = \frac{1}{n} \sum_{i=0}^n \left( \log(1+\hat{N}) - \log(1+N) \right)$
+\subsection{Results Validation}
+For validating our results we are plotting the 
+Relative Error $error := \frac{\vert \hat{N} - N \vert}{N}$.
+In the literature, the "raw" HLL estimate shows different performances
+for different ranges of cardinality, that are often empirically determined
+and corrected. We compare our results to the classic HLL \cite{flajolet2007hyperloglog},
+HyperLogLog++ \cite{heule2013hyperloglog} and other learned methods 
+\cite{aiyou2011selflearningbitmap} \cite{wu2021learnedestimator}.
+The ideal result would be an error close to the theoretical limit $1.04/sqrt(m)$
 
 
 
