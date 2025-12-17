@@ -13,6 +13,40 @@
 \begin{document}
 \maketitle
 
+\begin{abstract}
+Cardinality estimation is the problem of determining the number distinct elements in 
+a data stream, useful for many tasks in database systems and network monitoring.
+This paper presents a deep learning approach to extracting the cardinality estimate
+from HyperLogLog (HLL) sketches. By treating the HLL sketch as a feature vector for
+a regression model, the learned estimator can outperform classical bias-correction 
+techniques in specific regimes while maintaining the space complexity of the original
+HLL sketch.
+\end{abstract}
+
+\section{Introduction}
+Determining the number of distinct elements in a data stream is an active research area,
+useful in a wide range of fields in computer science. 
+While the cardinality can be computed with trivial methods, for many applications,
+this is impractical as it would require too much time and memory. 
+For tasks where only an approximation of the cardinality is needed, there have been developed
+algorithms that use far less resources.
+Some applications of such algorithms are database systems, using them for query processing 
+and optimization, network security monitoring and search engines\cite{harmouch2017cesurvey}.
+A big 
+
+While HLL is theoretically elegant, its practical implementation is fraught with challenges. 
+The standard asymptotic error formula ($\frac{1.04}{\sqrt{m}}$) fails for small cardinalities, 
+necessitating a switch to "Linear Counting." Furthermore, in the transition zones—where the 
+cardinality is neither small enough for Linear Counting nor large enough for the asymptotic 
+formula—HLL suffers from significant bias.Current state-of-the-art implementations, such as 
+Google's HLL++, attempt to mitigate this by storing large, pre-computed lookup tables and 
+sparse arrays for bias correction. These heuristics are complex to implement, static, and 
+derived under specific assumptions about the hash function's distribution. This raises a 
+compelling question: Can a machine learning model learn the true mapping from sketch states 
+to cardinality directly from data, bypassing the need for human-derived heuristics?
+
+\section{Related work}
+
 \section{Methodology}
 
 \subsection{Experimental Setup}

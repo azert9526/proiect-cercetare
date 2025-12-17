@@ -6,33 +6,44 @@ from torch.utils.data import Dataset, DataLoader
 from tqdm import tqdm
 
 
-def count_leading_zeros(x, q):
-    result = cp.zeros_like(x, dtype=cp.uint64)
-    not_zero_mask = x != 0
-    result[not_zero_mask] = q - (cp.floor(cp.log2(x[not_zero_mask])).astype(cp.uint64) + 1)
-    result[~not_zero_mask] = q
+clz_kernel = cp.ElementwiseKernel(
+    'uint64 x',
+    'uint64 z',
+    'z = (x == 0) ? 64 : __clzll(x)',
+    'count_leading_zeros_kernel'
+)
 
-    return result
 
-
-"""def generate_training_sample(p=16, q=48):
-    N = int(10 ** np.random.uniform(1, 8))
+def generate_training_sample(p=16, q=48, batch_size=10**7):
+    N = int(10 ** np.random.uniform(0, 10))
     m = 1 << p
-
-    h = cp.random.randint(0, (1 << 63), size=N, dtype=cp.uint64)
-
-    idx = h >> (64 - p)
-    w = (h << p) & cp.uint64((1 << 64) - 1)
-
-    lz = count_leading_zeros(w, q)
-    rho = (lz + 1).astype(dtype=cp.uint64)
-
     M = cp.zeros(m, dtype=cp.uint64)
-    cp.maximum.at(M, idx, rho)
 
-    return cp.asnumpy(M).astype(dtype=np.uint8), float(N)"""
+    remaining = N
+    while remaining > 0:
+        current_chunk_size = min(remaining, batch_size)
 
-def generate_training_sample(p=16, q=48):
+        low_bits = cp.random.randint(0, 1 << 32, size=current_chunk_size, dtype=cp.uint64)
+        high_bits = cp.random.randint(0, 1 << 32, size=current_chunk_size, dtype=cp.uint64)
+
+        h = (high_bits << 32) | low_bits
+
+        idx = h >> (64 - p)
+        w = h << p
+
+        lz = clz_kernel(w)
+        rho = (lz + 1).astype(dtype=cp.uint64)
+
+        cp.maximum.at(M, idx, rho)
+
+        remaining -= current_chunk_size
+
+        del h, idx, w, lz, rho
+        cp.get_default_memory_pool().free_all_blocks()
+
+    return cp.asnumpy(M).astype(dtype=np.uint8), float(N)
+
+def generate_training_sample_poisson(p=16, q=48):
     N = int(10 ** np.random.uniform(1, 8))
     m = 1 << p
 
@@ -94,7 +105,7 @@ class HLLDataset(Dataset):
 
 
 class HLLPrecomputedDataset(Dataset):
-    def __init__(self, path="training_data.npz"):
+    def __init__(self, path="next_600k.npz"):
         data = np.load(path)
         self.registers = data["registers"]
         self.cardinalities = data["cardinalities"]

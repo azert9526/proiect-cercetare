@@ -10,7 +10,7 @@ from tqdm import tqdm
 
 from generate_training_data import HLLDataset, generate_training_sample, generate_test_sample, HLLPrecomputedDataset
 from hll import HyperLogLog, LearnedRegisterWeightedHLL
-from neuralnet import LearnedHLL, extract_features
+from neuralnet import LearnedHLL
 import matplotlib.pyplot as plt
 
 

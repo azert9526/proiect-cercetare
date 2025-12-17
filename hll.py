@@ -3,8 +3,6 @@ from hashlib import sha256
 import numpy as np
 import torch
 
-from neuralnet import extract_features
-
 
 class HyperLogLog:
     def __init__(self, p):
