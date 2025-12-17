@@ -2,7 +2,7 @@ import numpy as np
 import cupy as cp
 from hll import HyperLogLog
 import torch
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import Dataset, DataLoader, TensorDataset
 from tqdm import tqdm
 
 
@@ -105,15 +105,22 @@ class HLLDataset(Dataset):
 
 
 class HLLPrecomputedDataset(Dataset):
-    def __init__(self, path="next_600k.npz"):
+    def __init__(self, path="train_data.npz", p=16):
         data = np.load(path)
-        self.registers = data["registers"]
-        self.cardinalities = data["cardinalities"]
+        self.histograms = torch.from_numpy(data["histograms"]).float()
+        self.targets = torch.from_numpy(np.log10(data["cardinalities"])).float()
 
     def __len__(self):
-        return len(self.cardinalities)
+        return len(self.targets)
 
     def __getitem__(self, idx):
-        M = torch.from_numpy(self.registers[idx])
-        N = torch.tensor(self.cardinalities[idx], dtype=torch.float32)
-        return M, N
+        return self.histograms[idx], self.targets[idx]
+
+
+def get_test_loader(batch_size=1024):
+    data = np.load("data_test.npz")
+
+    X = torch.from_numpy(data["histograms"]).float()
+    y = torch.from_numpy(np.log10(data["cardinalities"])).float()
+
+    return DataLoader(TensorDataset(X, y), batch_size=batch_size, shuffle=False)

@@ -81,3 +81,44 @@ class LearnedRegisterWeightedHLL(HyperLogLog):
 
         return pred
 
+
+def get_hll_constants(p):
+    m = 1 << p
+    if p == 4: alpha = 0.673
+    elif p == 5: alpha = 0.697
+    elif p == 6: alpha = 0.709
+    else: alpha = 0.7213 / (1 + 1.079 / m)
+    return alpha * m * m, m
+
+
+def hll_estimate_from_histograms(histograms, p=16):
+    const, m = get_hll_constants(p)
+
+    # 2. Re-scale normalized histograms
+    counts = histograms * m
+
+    # 3. Create powers of 2: [2^-0, 2^-1, 2^-2, ... 2^-63]
+    exponents = np.arange(64)
+    powers = 2.0 ** (-exponents)
+
+    # 4. Harmonic Mean Component: Sum(count[v] * 2^-v)
+    # Dot product along axis 1
+    Z_inv = np.dot(counts, powers)
+
+    # 5. Raw Estimate
+    E = const / Z_inv
+
+    # 6. Apply Standard HLL Bias Corrections (LinearCounting / LargeRange)
+    final_estimates = np.zeros_like(E)
+
+    # A. Linear Counting (Small Range)
+    V = counts[:, 0]
+
+    # Mask for small range (E < 2.5m) and empty registers exist (V > 0)
+    small_mask = (E < 2.5 * m) & (V > 0)
+    final_estimates[small_mask] = m * np.log(m / V[small_mask])
+
+    # B. Large Range (No correction needed for 64-bit usually, but included for completeness)
+    final_estimates[~small_mask] = E[~small_mask]
+
+    return final_estimates
