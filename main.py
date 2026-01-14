@@ -5,13 +5,15 @@ from torch.utils.data import random_split
 import torch
 from tqdm import tqdm
 
-from generate_training_data import HLLDataset, generate_training_sample, generate_dataset, get_test_loader
-from training import train_model, evaluate_and_plot
+from generate_training_data import get_test_loader
+from training import train_model
+from evaluate import eval_all_hll, run_shakespeare_benchmark
 
 #p - precision (number of registers)
 #q - value range of register (total_bits - p)
 
 model = train_model()
-test_loader = get_test_loader()
-evaluate_and_plot(model, test_loader)
+run_shakespeare_benchmark(model)
+#test_loader = get_test_loader()
+#eval_all_hll(model, test_loader)
 

@@ -1,126 +1,41 @@
 import numpy as np
-import cupy as cp
-from hll import HyperLogLog
 import torch
-from torch.utils.data import Dataset, DataLoader, TensorDataset
-from tqdm import tqdm
+from torch.utils.data import Dataset, DataLoader
 
 
-clz_kernel = cp.ElementwiseKernel(
-    'uint64 x',
-    'uint64 z',
-    'z = (x == 0) ? 64 : __clzll(x)',
-    'count_leading_zeros_kernel'
-)
-
-
-def generate_training_sample(p=16, q=48, batch_size=10**7):
-    N = int(10 ** np.random.uniform(0, 10))
+def compute_raw_hll(histograms, p=16):
     m = 1 << p
-    M = cp.zeros(m, dtype=cp.uint64)
+    # constants for p=16
+    alpha = 0.7213 / (1 + 1.079 / m)
+    const = alpha * (m ** 2)
 
-    remaining = N
-    while remaining > 0:
-        current_chunk_size = min(remaining, batch_size)
+    powers = 2.0 ** (-np.arange(64))
+    Z_inv = np.dot(histograms, powers)  # shape: (batch_size,)
 
-        low_bits = cp.random.randint(0, 1 << 32, size=current_chunk_size, dtype=cp.uint64)
-        high_bits = cp.random.randint(0, 1 << 32, size=current_chunk_size, dtype=cp.uint64)
-
-        h = (high_bits << 32) | low_bits
-
-        idx = h >> (64 - p)
-        w = h << p
-
-        lz = clz_kernel(w)
-        rho = (lz + 1).astype(dtype=cp.uint64)
-
-        cp.maximum.at(M, idx, rho)
-
-        remaining -= current_chunk_size
-
-        del h, idx, w, lz, rho
-        cp.get_default_memory_pool().free_all_blocks()
-
-    return cp.asnumpy(M).astype(dtype=np.uint8), float(N)
-
-def generate_training_sample_poisson(p=16, q=48):
-    N = int(10 ** np.random.uniform(1, 8))
-    m = 1 << p
-
-    lam = N / m
-
-    # Poisson on GPU
-    X = cp.random.poisson(lam, size=m)
-
-    # Uniforms for max-geometric computation
-    U = cp.random.random(m)
-
-    X_safe = cp.maximum(X, 1)
-
-    M = cp.log(1 - U**(1.0 / X_safe)) / cp.log(0.5)
-    M = cp.where(X == 0, 0, M)
-
-    # Final clipping
-    M = cp.clip(M, 0, q).astype(cp.uint8)
-
-    return cp.asnumpy(M), float(N)
-
-def generate_dataset(num_samples=200000, p=16, q=48):
-    m = 1 << p
-    registers = np.zeros((num_samples, m), dtype=np.uint8)
-    cardinalities = np.zeros(num_samples, dtype=np.uint64)
-
-    print("Generating dataset...")
-    for i in tqdm(range(num_samples)):
-        M, N = generate_training_sample(p, q)
-        registers[i] = M
-        cardinalities[i] = N
-
-    print("Saving dataset to training_data.npz...")
-    np.savez_compressed("training_data.npz", registers=registers, cardinalities=cardinalities)
-    print("Done! File: training_data.npz")
-
-
-def generate_test_sample(p=16, q=48):
-    return generate_training_sample(p, q)
-
-
-class HLLDataset(Dataset):
-    def __init__(self, size, p=16, max_reg=64):
-        self.size = size
-        self.p = p
-        self.max_reg = max_reg
-
-    def __len__(self):
-        return self.size
-
-    def __getitem__(self, idx):
-        M, hist, N = generate_training_sample(p=self.p, max_reg=self.max_reg)
-
-        hist = torch.tensor(hist, dtype=torch.float32)  # (max_reg,)
-        M = torch.tensor(M, dtype=torch.long)  # (m,)
-        N = torch.tensor(N, dtype=torch.float32)  # scalar
-
-        return hist, M, N
-
+    E = const / (Z_inv * m)  # formula adjustment for normalized hist (*m)
+    return E
 
 class HLLPrecomputedDataset(Dataset):
-    def __init__(self, path="train_data.npz", p=16):
+    def __init__(self, path="data_train.npz", p=16):
         data = np.load(path)
-        self.histograms = torch.from_numpy(data["histograms"]).float()
-        self.targets = torch.from_numpy(np.log10(data["cardinalities"])).float()
+        self.histograms = torch.from_numpy(data['histograms']).float() #these are normalized
+        self.histograms = self.histograms[:, :48] #cutting last p=16 values
+
+        true_N = data['cardinalities']
+        self.E_raw = torch.from_numpy(compute_raw_hll(data['histograms'], p=p)).float()
+
+        # target is correction = true_N / E
+        # log(correction) = log(true_N / E)
+        self.targets = torch.from_numpy(np.log10(true_N / self.E_raw.numpy())).float()
 
     def __len__(self):
         return len(self.targets)
 
     def __getitem__(self, idx):
-        return self.histograms[idx], self.targets[idx]
+        return self.histograms[idx], self.E_raw[idx], self.targets[idx]
 
 
 def get_test_loader(batch_size=1024):
-    data = np.load("data_test.npz")
+    data = HLLPrecomputedDataset("data_test.npz")
 
-    X = torch.from_numpy(data["histograms"]).float()
-    y = torch.from_numpy(np.log10(data["cardinalities"])).float()
-
-    return DataLoader(TensorDataset(X, y), batch_size=batch_size, shuffle=False)
+    return DataLoader(data, batch_size=batch_size, shuffle=False)

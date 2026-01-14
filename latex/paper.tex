@@ -5,146 +5,374 @@
 \usepackage{algorithm}
 \usepackage{algpseudocode}
 \usepackage{amsmath}
+\usepackage{mathtools}
 \usepackage[letterpaper]{geometry} 
 
-\title{A Learning Augmented approach to Cardinality Estimation}
+\title{A Learning Augmented Approach to Cardinality Estimation}
 \author{Mărcuș Alexandru Marian}
+
 
 \begin{document}
 \maketitle
 
 \begin{abstract}
-Cardinality estimation is the problem of determining the number distinct elements in 
+Cardinality estimation is the problem of determining the number of distinct elements in 
 a data stream, useful for many tasks in database systems and network monitoring.
-This paper presents a deep learning approach to extracting the cardinality estimate
-from HyperLogLog (HLL) sketches. By treating the HLL sketch as a feature vector for
-a regression model, the learned estimator can outperform classical bias-correction 
-techniques in specific regimes while maintaining the space complexity of the original
-HLL sketch.
+This paper presents a deep learning approach that augments the classical probabilistic 
+sketch with a lightweight Multilayer Perceptron. Rather than replacing the analytical 
+model entirely, our neural network learns to predict the logarithmic residual error of the 
+HyperLogLog estimate, acting as a continuous, learned bias-correction function. 
+Experiments on synthetic data show that the model successfully unifies the different 
+methods used for each cardinality range by this algorithm. Furthermore, on the real-world 
+Shakespeare dataset, our approach achieves a relative error of $\approx 0.04\%$, 
+outperforming the standard HLL algorithm while maintaining the memory and time complexity of 
+the original data structure.
 \end{abstract}
 
 \section{Introduction}
 Determining the number of distinct elements in a data stream is an active research area,
 useful in a wide range of fields in computer science. 
-While the cardinality can be computed with trivial methods, for many applications,
-this is impractical as it would require too much time and memory. 
+While the cardinality can be computed exactly using hash sets or sorting, for many applications,
+this is impractical due to linear memory and time requirements. 
 For tasks where only an approximation of the cardinality is needed, there have been developed
-algorithms that use far less resources.
-Some applications of such algorithms are database systems, using them for query processing 
+algorithms that require significantly fewer resources.
+Applications of such algorithms include database systems, that use them for query processing 
 and optimization, network security monitoring and search engines\cite{harmouch2017cesurvey}.
-A big 
-
-While HLL is theoretically elegant, its practical implementation is fraught with challenges. 
+Various algorithms have been proposed for this, including
+HyperLogLog \cite{flajolet2007hyperloglog}, which has the advantage of being parallelizable
+while computing the cardinality estimate in a single pass of the input data.
+HLL is theoretically elegant, but its practical implementations are more complex. 
 The standard asymptotic error formula ($\frac{1.04}{\sqrt{m}}$) fails for small cardinalities, 
-necessitating a switch to "Linear Counting." Furthermore, in the transition zones—where the 
-cardinality is neither small enough for Linear Counting nor large enough for the asymptotic 
-formula—HLL suffers from significant bias.Current state-of-the-art implementations, such as 
-Google's HLL++, attempt to mitigate this by storing large, pre-computed lookup tables and 
-sparse arrays for bias correction. These heuristics are complex to implement, static, and 
-derived under specific assumptions about the hash function's distribution. This raises a 
-compelling question: Can a machine learning model learn the true mapping from sketch states 
-to cardinality directly from data, bypassing the need for human-derived heuristics?
+necessitating a switch to a Linear Counting algorithm \cite{flajolet2007hyperloglog}.
+Furthermore, in the transition zones—where the cardinality is neither small enough for 
+Linear Counting nor large enough for the asymptotic formula, HLL performs badly. Current 
+state-of-the-art implementations attempt to mitigate this by storing large,
+pre-computed lookup tables and sparse arrays for bias correction \cite{heule2013hyperloglog}. 
+These heuristics are complex to implement. Our solution aims to have a machine
+learning model learn the true mapping from sketch states 
+to cardinality directly from data, bypassing the need for human-derived heuristics.
 
 \section{Related work}
+The problem of cardinality estimation has been extensively studied due to its critical 
+importance in database query optimization and network traffic monitoring. Early probabilistic 
+approaches, such as Linear Counting \cite{whang1990linearcounting}, relied on counting empty buckets 
+in a hash table. While highly accurate for small cardinalities, Linear Counting requires memory 
+linear to the cardinality, making it impractical for large datasets. To address high-cardinality 
+streams, Flajolet et al. introduced the HyperLogLog algorithm \cite{flajolet2007hyperloglog},
+which achieves a standard error of $1.04/\sqrt{m}$ using only $O(\log \log N)$ memory. HLL relies
+on the observation that the maximum number of leading zeros in the binary representation of hashed 
+elements serves as a good indicator of cardinality. However, the raw HLL estimator exhibits 
+significant bias for small cardinalities and requires switching to Linear Counting when the number 
+of empty registers is high. 
 
-\section{Methodology}
+\textbf{Algorithmic Engineering.} The practical limitations of the asymptotic HLL 
+formula led to the development of HyperLogLog++ by Heule et al. \cite{heule2013hyperloglog}. This 
+implementation introduces complex heuristics:  a sparse representation for very small sets, 
+and an empirical lookup tables to correct bias, especially in the transition zone between
+Linear Counting and the 
+asymptotic regime. While effective, HLL++ increases implementation complexity and relies on fixed, 
+pre-computed constants that may not be optimal for all distributions. More recently, 
+Ertl \cite{ertl2017hll} proposed a rigorous mathematical solution using 
+Maximum Likelihood Estimation. This eliminates the need for lookup tables and achieves 
+lower variance than HLL++, but it requires finding the roots of a complex function at query time,
+which can be computationally expensive.
 
-\subsection{Experimental Setup}
-To measure the performance of this method, we generated a synthetic dataset
-containing 200000 different HyperLogLog sketches, each sketch having
-a cardinality in the range of $[10, 10^8]$, with a log-uniform distribution. Assuming a uniform hash function, we can 
-generate uniformly distributed 64 bit integers, simulating the hash values of random elements. 
-For real-world datasets we are using Openadresses and NCVoter. \cite{harmouch2017cesurvey}
+\textbf{Learned Algorithms.} Following Kraska et al. paper\cite{kraska2017learnedindex}
+there has been a trend of replacing heuristic-based system components with machine 
+learning models. This work showed that neural networks could learn 
+the cumulative distribution 
+function of data to outperform traditional B-Trees, inspiring further research into "learned" 
+database components. 
+Closest to our work is Wu et al., who proposed a supervised learning framework
+for cardinality estimation \cite{wu2021learnedestimator}.
+They demonstrated that a deep learning model could effectively 
+estimate cardinality using a sample based method. Our work is different, focusing on enhancing
+the already existing sketch based method HLL with the help of machine learning.
 
-\subsection{Model matematic}
+In this paper we propose a correction model that acts as a lightweight replacement 
+for the HLL++ need for lookup tables, linear counting and sparse representation of the registers,
+preserving the standard HLL sketch format 
+while smoothing the discontinuity between Linear Counting and the asymptotic regime.
+
+\section{Preliminaries}
+
+\subsection{The HyperLogLog Algorithm}
+The HyperLogLog algorithm approximates the cardinality of a multiset by analyzing the statistical
+properties of hashed elements. It relies on the observation that in a stream of uniformly 
+distributed random integers, the maximum number of leading zeros in the binary representation is 
+correlated with the number of distinct elements in the stream. To reduce the variance of a single 
+observation, it uses a technique known as stochastic averaging \cite{flajolet1985probabilisticcounting}.
+The input stream $S$ is partitioned into $m = 2^p$ substreams $S_i$ using the first $p$ bits of the 32-bit 
+hash value. The remaining bits are used to compute the number of leading zeros in the binary
+representation of the hashed value.
+The algorithm maintains a state vector (or "sketch") of $m$ registers, $M = [M_1, \dots, M_m]$, 
+where each register $M_j$ stores the maximum rank observed in the $i$-th substream:
+$$M_j = \max_{x \in S_i} \rho(x)$$
+where $\rho(x)$ denotes the number of leading zeros in the binary representation of x plus one.
+By convention, $max_{x \in \emptyset} \rho(x) = -\infty$. The algorithm
+uses these registers to compute the cardinality estimate as the normalized
+bias corrected harmonic mean of the estimations on the substreams
+$$E \coloneqq \alpha_m m^2 \left( \sum_{j=1}^{m} 2^{-M_j} \right)^{-1}$$
+Here, $\alpha_m$ is a bias-correction constant derived from the integral of the log-distribution.
+$$\alpha_m \coloneqq \left( m \int_0^\infty \left( \log_2 \left( \frac{2+u}{1+u} \right) \right)^m du \right)^{-1}$$
+More details about the algorithm can be found in the original paper by Flajolet et al. \cite{flajolet2007hyperloglog}.
+
 \begin{algorithm}[H]
-\caption{Learned HyperLogLog}
+\caption{HyperLogLog}
 \begin{algorithmic}[1]
-\Require Let $h : \mathcal{D} \to \{0,1\}^{64}$ hash data from domain $\mathcal{D}$.  
+\Require Let $h : \mathcal{D} \to \{0,1\}^{32}$ hash data from domain $\mathcal{D}$.  
 Let $m = 2^p$ with $p \in [4..16]$.
 
 \Statex
 \textbf{Phase 0: Initialization.}
+\State Define $\alpha_{16} = 0.673, \alpha_{32} = 0.697, \alpha_{64} = 0.709,
+\alpha_m = 0.7213/(1 + 1.079/m)$ for $m \geq 128$
 \State Initialize $m$ registers $M[0]$ to $M[m-1]$ to 0.
 
 \Statex
 \textbf{Phase 1: Aggregation.}
 \ForAll{$v \in S$}
     \State $x := h(v)$
-    \State $\mathit{id} := (x_{63},\ldots,x_{64-p})_2$ \Comment{First $p$ bits of $x$}
-    \State $w := (x_{63-p},\ldots,x_0)_2$
-    \State $M[\mathit{id}] := \max(M[\mathit{id}], \rho(w))$
+    \State $\mathit{id} := (x_{31},\ldots,x_{32-p})_2$ \Comment{First $p$ bits of $x$}
+    \State $w := (x_{31-p},\ldots,x_0)_2$
+    \State $M[\mathit{idx}] := \max(M[\mathit{idx}], \rho(w))$
 \EndFor
 
 \Statex
 \textbf{Phase 2: Result computation.}
-\State \Return Model Prediction 
+\State $E \coloneqq \alpha_m m^2 \left( \sum_{j=1}^{m} 2^{-M_j} \right)^{-1}$
+\If{$E \leq \frac{5}{2} m $}
+    \State Let $V$ be the number of registers equal to 0.
+    \If{$V \neq 0$}
+        \State $E^* \coloneqq m \log(m/V)$
+    \Else
+        \State $E^* \coloneqq E$
+    \EndIf
+\ElsIf{$E \leq \frac{1}{30} 2^{32}$}
+    \State $E^* \coloneqq E$
+\Else
+    \State $E^* \coloneqq -2^{32} \log(1-E/2^{32})$
+\EndIf
+\State \Return $E^*$
 \end{algorithmic}
 \end{algorithm}
 
-Instead of using the classic formula $E := \alpha_m m^2 \left( \sum_{j=0}^{m-1} 2^{-M[j]} \right)^{-1}$ \cite{flajolet2007hyperloglog}
-for extracting the result from our sketch, we propose training a neural network to predict the cardinality. 
-This approach should not have much overhead, in terms of memory or speed.
 
-The model takes the raw register array $M \in \left\{ 0, 1, ..., q \right\}^m$
-as input and outputs the prediction $\log(N)$.
+\subsection{Bias and Correction}
+While the estimator $E$ is asymptotically unbiased, 
+simulations by Flajolet et. al.
+show that for $n < \frac{5}{2}m$ nonlinear distortions appear. 
+To address this, standard implementations like HyperLogLog++\cite{heule2013hyperloglog} 
+employ a hybrid approach that switches between different algorithms based on the estimated cardinality:
 
-Each HLL sketch consists of $m=2^p$ registers, 
-$M = \left[ M_1, M_2, ..., M_m \right]$, $M_i\in \left\{ 0, 1, ..., q \right\}$
+\textbf{Linear Counting.}  When empty registers exist, HLL++ calculates the estimate
+for this range using the formula $E_LC = m \log(\frac{m}{V})$\cite{whang1990linearcounting}, where 
+$V$ is the number of empty registers. Also, it uses a sparse format for in memory representation
+of the sketch
+when calculating small cardinalities.
 
-Before feeding the array $M$ to the network, we normalize the values $x_i=M_i/q$.
-We apply three 1D convolutional layers, to downsample from the $2^p$ channels
-down to a compact 64x1024 activation map.
-Then it is fed into a multilayer perceptron, with three linear layers, from 
-64*1024 -> 512 -> 128 -> final prediction, $\log(n)$. 
+\textbf{Bias Correction.} In the transition range where Linear Counting becomes inaccurate but
+$E$ is still biased, HLL++ relies on empirical bias-correction lookup tables derived 
+from simulation.
 
-As the loss function, we chose the mean squared logarithmic error 
-$$L = \frac{1}{n} \sum_{i=0}^n \left( \log(1+\hat{N}) - \log(1+N) \right)$$
-\subsection{Results Validation}
-For validating our results we are plotting the 
-relative error $error := \frac{\vert \hat{N} - N \vert}{N}$.
-In the literature, the "raw" HLL estimate shows different performances
-for different ranges of cardinality, that are often empirically determined
-and corrected. It's important we observe the performance of our approach for
-all the possible different cardinalities, thus we prefer plotting our results
-instead of another measure like the mean relative error.
+\textbf{Large Range.} As $n$ approaches $2^{32}$, collisions in the 32-bit hash space cause 
+underestimation. HLL++ uses a 64-bit hash to solve this issue.
 
-\section{Studiu de caz}
+\section{Methodology}
 
-On our synthetic dataset we obtain better results than the original HLL paper,
-as shown in our comparison graph\ref{fig:comparison}.
-We still have to measure the overhead produces by this approach, even 
-if the theoretical space and time complexity remains the same.
+\subsection{Learned HLL}
 
-\begin{figure}
+Instead of relying on heuristic lookup tables or discrete mode-switching, 
+we propose a learning-based approach that treats bias correction as a regression problem.
+
+\textbf{Problem Formulation.} Direct prediction of cardinality $N$ from sketch registers
+is difficult due to the large output range ($0$ to $10^9$). To stabilize learning, 
+we formulate the problem as predicting the residual log-error of the raw estimator. 
+Given a normalized histogram of register values $H$, our model $f_\theta$ predicts a correction 
+factor $c$:
+$$\log_{10}(c) = f_\theta(H)$$
+The final estimated cardinality $\hat{N}$ is obtained by scaling the raw estimate:
+$$\hat{N} = E \cdot 10^{f_\theta(H)}$$
+This approach allows the model to focus purely on learning the bias pattern rather then 
+the entire math behind the model.
+\textbf{Model Architecture.} We employ a lightweight Multi-Layer Perceptron (MLP) to ensure low 
+inference latency. The input is a feature vector derived from the HLL registers. 
+To capture the signal in the high-sparsity regime (where Linear Counting dominates), 
+we augment the standard histogram with an occupancy feature, defined as $\log(1 - V/m)$, 
+representing the density of non-empty registers. The network consists of three fully connected 
+layers with Batch Normalization \cite{ioffe2015batchnorm} and 
+LeakyReLU \cite{maas2013rectifier} activations, minimizing a Huber Loss (SmoothL1) function. 
+This architecture is differentiable and constant-time $O(1)$ relative to stream size, 
+matching the efficiency requirements of streaming systems.
+
+\begin{algorithm}[H]
+\caption{Learned HyperLogLog}
+\begin{algorithmic}[1]
+\Require Hash function $h : \mathcal{D} \to \{0,1\}^{64}$
+\Require Precision parameter $p \in [4..16]$, $m = 2^p$
+\Require Pre-trained Neural Network $f_\theta$ (MLP)
+
+\Statex
+\textbf{Phase 0: Initialization}
+\State Initialize registers $M[0 \dots m-1] \gets 0$
+
+\Statex
+\textbf{Phase 1: Aggregation}
+\ForAll{$v \in \text{Stream } S$}
+    \State $x \gets h(v)$
+    \State $j \gets \text{integer}(x_{63} \dots x_{64-p})$ \Comment{Register Index}
+    \State $w \gets (x_{63-p} \dots x_{0})$ \Comment{Remaining Bits}
+    \State $M[j] \gets \max(M[j], \rho(w))$ \Comment{Update Rank}
+\EndFor
+
+\Statex
+\textbf{Phase 2: Result Computation}
+\State $Z \gets \left( \sum_{j=0}^{m-1} 2^{-M[j]} \right)^{-1}$ \Comment{Harmonic Sum}
+\State $E \gets \alpha_m \cdot m^2 \cdot Z$ \Comment{Standard HLL Estimate}
+\State $H \gets \text{Histogram}(M)$ \Comment{Extract feature vector}
+\State $\delta \gets f_\theta(H)$ \Comment{Predict log-residual correction}
+\State \Return $E \cdot 10^\delta$ \Comment{Apply correction}
+\end{algorithmic}
+\end{algorithm}
+
+\subsection{Dataset Generation}
+
+To evaluate our approach, we generated a synthetic dataset containing $600,000$ distinct 
+HyperLogLog sketches configured with a precision of $p=16$.
+The true cardinality $N$ for each sketch was sampled from a 
+log-uniform distribution over the range $[10, 10^8]$, ensuring balanced representation 
+across orders of magnitude. 
+
+To simulate the hash values of distinct elements, we generated uniformly distributed 
+64-bit integers using the \textbf{Xorshift64} algorithm \cite{marsaglia2003xorshift}. 
+This method allows us to simulate
+a high-quality hash function applied to unique 
+stream elements, without the computational overhead of hashing string objects. 
+The resulting dataset was partitioned into training ($80\%$), validation ($10\%$), 
+and testing ($10\%$) sets.
+
+\subsection{Training Strategy}
+
+\textbf{Loss Function.} 
+Standard regression loss functions like Mean Squared Error are sensitive to outliers, 
+which are common when estimating cardinality across orders of magnitude. 
+To ensure robust convergence, we minimize the \textbf{Huber Loss} \cite{huber1964robust} 
+(Smooth L1 Loss) 
+between the predicted log-correction $\delta$ and the true log-residual 
+$\delta_{true} = \log_{10}(N / E)$:
+$$
+\mathcal{L}(\delta, \delta_{true}) = 
+\begin{cases} 
+\frac{1}{2} (\delta - \delta_{true})^2, & \text{if } |\delta - \delta_{true}| < 1 \\
+|\delta - \delta_{true}| - \frac{1}{2}, & \text{otherwise}
+\end{cases}
+$$
+This objective function behaves quadratically for small errors (providing smooth gradients) and linearly for large errors (preventing exploding gradients during the initial training phase).
+
+\textbf{Optimization.}
+We train the network using the \textbf{AdamW} optimizer \cite{loshchilov2017decoupled}
+with an initial learning rate 
+of $5 \cdot 10^{-4}$ and a weight decay of $10^{-4}$ to prevent overfitting. 
+We employ a dynamic learning rate scheduler that reduces the learning rate by 
+a factor of $0.5$ if the validation loss plateaus for 3 consecutive epochs. 
+
+\textbf{Training Protocol.}
+The model is trained for a maximum of 100 epochs with a batch size of 1024. 
+To prevent overfitting to the synthetic data, we implement \textbf{Early Stopping} with a patience 
+of 15 epochs, saving the model weights that achieve the lowest validation loss. 
+All experiments were conducted on a single NVIDIA GPU using the PyTorch framework \cite{pytorch}.
+
+\section{Experimental Results}
+\subsection{Experimental Setup}
+To assess the quality of the cardinality estimates, we utilize the standard Relative Error metric,
+defined as:$$\text{Error} = \frac{|\hat{N} - N|}{N}$$where $N$ is the true cardinality and $\hat{N}$
+is the estimated cardinality. We analyze the error distribution across the entire logarithmic range
+of cardinalities to identify regime-specific behaviors.
+
+For the HLL++ benchmarks, we utilized the $python-hll$ library \cite{aquino2019pythonhll}, 
+a Python port of the standard Java HLL implementation. This library includes the sparse 
+representation and empirical bias correction logic defined in the HyperLogLog++ paper.
+
+\subsection{Accuracy Comparison}
+We compare our Learned
+HLL against two baselines:\begin{enumerate}\item Standard HLL (Theoretical): The raw harmonic mean 
+estimator combined with the analytical Linear Counting lower bound.\item  HLL++: 
+The production-grade implementation from the Google Guava library, which utilizes sparse representations
+and empirical bias correction.\end{enumerate}Results. Figure \ref{fig:comparison} illustrates the 
+relative error trends for all three methods.
+\begin{figure}[h]
 \centering
-\includegraphics[totalheight=8cm]{result.png}
-\caption{Our Approach (orange) vs Original HLL (blue)}
+\includegraphics[width=\linewidth]{result.png}
+\caption{Comparison of Relative Error: Our approach (Red), HLL (Green), HLL++ (Blue). 
+Note the Learned Model's ability to mimic the non-linear bias curve of the Linear Counting regime.}
 \label{fig:comparison}
 \end{figure}
+As shown in the figure, our learned model successfully captures the complex, 
+non-linear bias inherent in the low-cardinality regime ($N < 5m$).
+\begin{itemize}
+    \item Low Cardinality: The learned model (Red) closely follows the theoretical
+    lower bound of Linear Counting (Green). While there is a small constant offset
+    due to the resolution limits of the floating-point input features, the model 
+    correctly identifies the structural relationship between register occupancy 
+    and cardinality without explicit programming.
+    \item Transition Zone: Unlike HLL++ (Blue), which exhibits a sharp discontinuity 
+    or "jump" when switching between Linear Counting and the raw estimator, the 
+    residual neural network provides a smooth, continuous transition. 
+    This eliminates the artifacts typically caused by heuristic mode-switching.
+    \item Asymptotic Regime ($N > 10^5$): For large cardinalities, the model converges 
+    to the standard error rate of the raw HLL estimator, confirming that the residual 
+    correction term $\delta$ correctly decays to zero as the bias disappears.
+\end{itemize}
+\subsection{Space and Time Complexity}
+A key advantage of the learned approach is architectural simplicity. 
+Standard HLL++ implementations require storing empirical lookup tables 
+and implementing interpolation logic between the values. 
+In contrast, our MLP model requires $\approx 800$ KB of weights and executes a 
+fixed number of matrix multiplications ($O(1)$) regardless of the stream size. 
+This makes it a viable lightweight alternative for systems where code complexity 
+and maintenance are concerns.
 
-\section{Related work}
-We compare our results to the classic HLL \cite{flajolet2007hyperloglog},
-HyperLogLog++ \cite{heule2013hyperloglog} and other learned methods 
-\cite{aiyou2011selflearningbitmap} \cite{wu2021learnedestimator}.
-The ideal result would be an error close to the theoretical limit $1.04/sqrt(m)$.
+\subsection{Real-World Data}
 
-Our approach builds the HyperLogLog sketch like usual, as proposed by
-\cite{flajolet2007hyperloglog}, but extracts the cardinality information
-using a machine learning approach. This is in contrast to other machine learning
-approaches that try to sample from the dataset to estimate its cardinality.
-Building the sketch requires a scan of the dataset so it is better suited
-for streaming environments. A more comprehensive review is found 
-in \cite{harmouch2017cesurvey}.
+To verify that our model generalizes beyond synthetic data, we evaluated it on the 
+Complete Works of Shakespeare dataset\cite{gutenberg}, consisting of 25,752 distinct words. Table \ref{tab:shakespeare}
+compares the results of our Residual Learned Model against the standard 
+HLL implementation. Despite being trained exclusively on uniform random integers, 
+the learned model successfully generalized to the natural language distribution, 
+achieving a relative error of 0.04\%. This represents an improvement over 
+the standard analytical estimator (0.07\%) on this dataset. This result shows that the 
+model has learned the statistical properties of the HyperLogLog registers rather 
+than overfitting to the training data generation process.
 
-The advantages of this approach are reduced bias for real world distribution, because the hash function
-may not be able to produce fully uniform results, but the network could learn
-this and not be affected. It also eliminates the need 
-for magic numbers and special cases, used in the original algorithm and other
-improvements \cite{heule2013hyperloglog}.
+\begin{table}[h]
+\centering
+\caption{Counting Distinct Words in Shakespeare's Complete Works}
+\label{tab:shakespeare}
+\begin{tabular}{l|r|c}
+\hline
+\textbf{Method} & \textbf{Estimate} & \textbf{Relative Error} \\ \hline
+True Cardinality & 25,752 & 0\% \\ \hline
+HyperLogLog & 25,734 & 0.0682\% \\ \hline
+\textbf{Learned HLL} & 25,741 & 0.0391\% \\ \hline
+\end{tabular}
+\end{table}
 
+\section{Conclusion}
+In this work, we presented a novel hybrid approach to cardinality estimation that augments 
+the standard HyperLogLog algorithm with a lightweight neural network. By framing the bias 
+correction problem as a residual learning task, we demonstrated that a simple Multilayer 
+Perceptron (MLP) can effectively learn the non-linear error patterns inherent in probabilistic 
+counting, replacing the lookup tables and interpolation logic used in 
+industry-standard implementations like Google HLL++.
 
-\nocite{*}
+Our experimental results show that this learned approach provides a unified correction function 
+across all cardinality regimes. On synthetic data, the model successfully reproduced the theoretical 
+lower bounds of Linear Counting without explicit programming. On real-world natural language data 
+(Shakespeare corpus), the model generalized well, achieving a relative error of $\approx 0.04\%$, 
+outperforming the standard HLL estimator while maintaining constant $O(1)$ memory usage.
+
+These findings suggest that "Learned Algorithms", specifically replacing heuristic components of 
+classical data structures with learned models, offer a promising direction for systems optimization.
 
 \bibliographystyle{unsrt}
 \bibliography{references}

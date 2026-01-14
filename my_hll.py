@@ -66,20 +66,29 @@ class HyperLogLog:
         return int(self.estimate())
 
 
-class LearnedRegisterWeightedHLL(HyperLogLog):
+class LearnedHLL(HyperLogLog):
     def __init__(self, model, p):
         super().__init__(p)
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.model = model
+        self.model.eval()
 
     def estimate(self):
-        registers = torch.tensor(self.M, dtype=torch.float32, device=self.device)
+        Z_inv = np.sum(2.0 ** (-self.M))
+        E = self.alpha * (self.m * self.m) / Z_inv
 
+        hist = np.bincount(self.M, minlength=48)[:48].astype(np.float32) #histogram of registers
+        hist = hist / self.m  # normalize
+
+        hist_tensor = torch.tensor(hist, dtype=torch.float32).unsqueeze(0).to(self.device)
+
+        # inference
         with torch.no_grad():
-            log_pred = self.model(registers.unsqueeze(0))
-            pred = torch.exp(log_pred).cpu().item()
+            pred_log_delta = self.model(hist_tensor).item()
 
-        return pred
+        estimated_cardinality = E * (10 ** pred_log_delta)
+
+        return estimated_cardinality
 
 
 def get_hll_constants(p):
@@ -94,31 +103,26 @@ def get_hll_constants(p):
 def hll_estimate_from_histograms(histograms, p=16):
     const, m = get_hll_constants(p)
 
-    # 2. Re-scale normalized histograms
+    # rescale normalized histograms
     counts = histograms * m
 
-    # 3. Create powers of 2: [2^-0, 2^-1, 2^-2, ... 2^-63]
     exponents = np.arange(64)
     powers = 2.0 ** (-exponents)
 
-    # 4. Harmonic Mean Component: Sum(count[v] * 2^-v)
-    # Dot product along axis 1
     Z_inv = np.dot(counts, powers)
 
-    # 5. Raw Estimate
     E = const / Z_inv
 
-    # 6. Apply Standard HLL Bias Corrections (LinearCounting / LargeRange)
     final_estimates = np.zeros_like(E)
 
-    # A. Linear Counting (Small Range)
+    # linear counting
     V = counts[:, 0]
 
-    # Mask for small range (E < 2.5m) and empty registers exist (V > 0)
+    # mask for small range (E < 2.5m) and empty registers exist (V > 0)
     small_mask = (E < 2.5 * m) & (V > 0)
     final_estimates[small_mask] = m * np.log(m / V[small_mask])
 
-    # B. Large Range (No correction needed for 64-bit usually, but included for completeness)
+    # large range
     final_estimates[~small_mask] = E[~small_mask]
 
     return final_estimates
